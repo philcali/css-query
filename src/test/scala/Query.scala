@@ -41,7 +41,7 @@ html @lang="en"
               p "Here's some more stuff"
               ol
                 li "One"
-                li "Two"
+                li strong "Two"
 """
   val html = Lmxml.convert(source)(XmlConvert)
 
@@ -93,5 +93,33 @@ html @lang="en"
 
   it should "support nth selection" in {
     (html $ "ul > li:nth-child(1)").text should be === "HomeOne"
+  }
+
+  "CssParsers" should "be extensible" in {
+    val parser = new CssParsers {
+      def byNthDescent: Parser[Combinator] =
+        """\s*>>""".r ~> opt("(" ~> isNumber <~ ")") <~ """\s*""".r ^^ {
+          level => (left, right) => (nodes) =>
+            right((left(nodes) /: (1 to level.filter(_ >= 2).getOrElse(2)))({
+              case (initialNodes, i) => initialNodes.flatMap(_.child)
+            }))
+        }
+
+      override def byCombinator = (byNthDescent | super.byCombinator)
+    }
+
+    (html.select("ol >> strong")(parser)).text should be === "Two"
+    (html.select(".pages >>(3) h3")(parser)).text should be === "Page OnePage Two"
+  }
+
+  it should "support options" in {
+    (html ? "!blarg") should be === None
+    (html ? "#nav") map (_ $ "li") should be ('defined)
+  }
+
+  it should "support eithers" in {
+    evaluating (html $ "!blarg") should produce [CssSelectorException]
+    (html ?? "!blarg") should be ('left)
+    (html ?? "div ol li") should be ('right)
   }
 }

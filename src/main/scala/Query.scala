@@ -15,15 +15,20 @@ class RichCssSelection(origin: NodeSeq) {
   def select(input: String)(implicit parser: CssParsers) = parser(input)(origin)
 
   def selectOption(input: String)(implicit parser: CssParsers) = {
-    allCatch(parser(input)(origin)) filter (!_.isEmpty)
+    allCatch.opt(select(input)(parser)) filter (!_.isEmpty)
+  }
+
+  def selectEither(input: String)(implicit parser: CssParsers) = {
+    allCatch.either(select(input)(parser))
   }
 
   def $(input: String)(implicit parser: CssParsers) = select(input)(parser)
 
   def ?(input: String)(implicit parser: CssParsers) = selectOption(input)(parser)
+
+  def ??(input: String)(implicit parser: CssParsers) = selectEither(input)(parser)
 }
 
-// CSS 2 selectors: http://www.w3.org/TR/CSS2/selector.html
 trait CssParsers extends RegexParsers {
 
   type Transform = NodeSeq => NodeSeq
