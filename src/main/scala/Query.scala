@@ -5,6 +5,8 @@ import java.lang.RuntimeException
 
 import xml.{ NodeSeq, Node }
 
+import util.control.Exception.allCatch
+
 trait CssImplicits {
   implicit def nodeSeqToCssSelect(nodes: NodeSeq) = new RichCssSelection(nodes)
 }
@@ -12,7 +14,13 @@ trait CssImplicits {
 class RichCssSelection(origin: NodeSeq) {
   def select(input: String)(implicit parser: CssParsers) = parser(input)(origin)
 
+  def selectOption(input: String)(implicit parser: CssParsers) = {
+    allCatch(parser(input)(origin)) filter (!_.isEmpty)
+  }
+
   def $(input: String)(implicit parser: CssParsers) = select(input)(parser)
+
+  def ?(input: String)(implicit parser: CssParsers) = selectOption(input)(parser)
 }
 
 // CSS 2 selectors: http://www.w3.org/TR/CSS2/selector.html
@@ -36,19 +44,15 @@ trait CssParsers extends RegexParsers {
     op(node.child) ++ node.child.flatMap(sameLevel(_)(op))
   }
 
-  protected def typeQuery(full: Boolean, query: String): Transform = {
-    if (full) _ \\ query else _ \ query
-  }
-
   private def nthGenerator(step: Int, adjust: Int): Transform = nodes => {
     if (step <= 0 && adjust == 0) nodes
     else if (step <= 0 && adjust != 0) {
-      noAtoms(nodes).lift(math.abs(adjust) - 1)
+      nodes.lift(math.abs(adjust) - 1)
         .map(singleToSeq).getOrElse(NodeSeq.Empty)
     } else {
       val interval = math.abs(step)
       val index = if (adjust <= 0) interval + adjust else (adjust - 1)
-      noAtoms(nodes).sliding(interval, interval).map(ns =>
+      nodes.sliding(interval, interval).map(ns =>
         ns.lift(index).map(singleToSeq).getOrElse(NodeSeq.Empty)
       ).foldRight(NodeSeq.Empty)(_ ++ _)
     }
@@ -68,12 +72,10 @@ trait CssParsers extends RegexParsers {
       case None ~ adjust => nthGenerator(0, adjust)
     }
 
-  def byUniversal: Parser[Transform] = "*" ^^ (_ =>
-    typeQuery(true, "_")
-  )
+  def byUniversal: Parser[Transform] = "*" ^^ (_ => _ filter (!_.isAtom))
 
   def byType: Parser[Transform] = element ^^ (elem =>
-    typeQuery(true, elem)
+    _ filter (_.label.equalsIgnoreCase(elem))
   )
 
   def byId: Parser[Transform] = "#" ~> identity ^^ {
@@ -151,39 +153,32 @@ trait CssParsers extends RegexParsers {
     }
 
   def byChild: Parser[Combinator] = """\s*>\s*""".r ^^ { _ =>
-    (left, right) => nodes => (left(nodes)) flatMap { node =>
-      right(node).filter(n => node.child.contains(n))
-    }
+    (left, right) => nodes => left(nodes) flatMap (node => right(node.child))
   }
 
   def byDescend: Parser[Combinator] = whiteSpace ^^ { _ =>
-    (left, right) => ns => right((left(ns)) flatMap (_.child))
+    (left, right) => nodes => left(nodes) flatMap (sameLevel(_)(right))
   }
 
   def byAdjacent: Parser[Combinator] = """\s*\+\s*""".r ^^ { _ =>
     (left, right) => nodes => {
-      val fNodes = left(nodes)
-      nodes flatMap (sameLevel(_) { children =>
-        noAtoms(children).sliding(2, 1).filter { ns =>
-          val sNodes = right(ns.tail)
-          ns.head == fNodes.head && !sNodes.isEmpty
-        }.foldRight(NodeSeq.Empty)(_.tail ++ _)
-      })
+      noAtoms(nodes).sliding(2, 1).flatMap { ns =>
+        val fNodes = left(ns.head)
+        val sNodes = right(ns.tail)
+        if (fNodes.isEmpty || sNodes.isEmpty) NodeSeq Empty
+        else sNodes
+      }.toList
     }
   }
 
   def byGeneral: Parser[Combinator] = """\s*~\s*""".r ^^ { _ =>
     (left, right) => nodes => {
       val fNodes = left(nodes)
-      nodes flatMap (sameLevel(_) { children =>
-        val sNodes = right(children)
-        if (fNodes.isEmpty || sNodes.isEmpty) NodeSeq Empty
-        else {
-          val first = children.indexOf(fNodes.head)
-          if (first > -1 && first < children.indexOf(sNodes.head)) sNodes
-          else NodeSeq Empty
-        }
-      })
+      if (fNodes.isEmpty) NodeSeq Empty
+      else {
+        val first = nodes.indexOf(fNodes.head)
+        if (first == -1) NodeSeq Empty else right(nodes.splitAt(first)._2)
+      }
     }
   }
 
@@ -202,11 +197,12 @@ trait CssParsers extends RegexParsers {
 
   def rightSide = (byId | byClass | byAttr | byPseudo | byNeg)
 
-  def weightedRight = (opt(leftSide) ~ rep1(rightSide)) ^^ {
-    case el ~ ops => (el.getOrElse(typeQuery(true, "_")) /: ops)(_ andThen _)
+  def weightedRight: Parser[Transform] = (opt(leftSide) ~ rep1(rightSide)) ^^ {
+    case el ~ ops =>
+      (el.getOrElse((_: NodeSeq).filter(!_.isAtom)) /: ops)(_ andThen _)
   }
 
-  def weightedLeft = (leftSide ~ rep(rightSide)) ^^ {
+  def weightedLeft: Parser[Transform] = (leftSide ~ rep(rightSide)) ^^ {
     case el ~ ops => (el /: ops)(_ andThen _)
   }
 
@@ -218,9 +214,15 @@ trait CssParsers extends RegexParsers {
 
   def selectorSeq: Parser[Transform] =
     bySimpleSelect ~ rep(byCombinator ~ bySimpleSelect) ^^ {
-      case select ~ selects => (select /: selects)({
-        case (left, combo ~ right) => combo(left, right)
-      })
+      case select ~ selects =>
+        val combinators = selects.reverse match {
+          case (hcombo ~ hright) :: rest =>
+            rest.foldLeft(hcombo(_: Transform, hright))({
+              case (application, combo ~ right) => combo(_, application(right))
+            }).apply(select)
+          case Nil => select
+        }
+        _ flatMap (node => combinators(node) ++ sameLevel(node)(combinators))
     }
 
   def selectorGroup: Parser[Transform] = rep1sep(selectorSeq, """\s*,\s*""".r) ^^ {
