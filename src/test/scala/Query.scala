@@ -4,7 +4,7 @@ package test
 import org.scalatest.FlatSpec
 import org.scalatest.matchers.ShouldMatchers
 
-import lmxml.{ PlainLmxmlFactory, Conversion, XmlConvert }
+import lmxml.{ PlainLmxmlFactory, Conversion, XmlConvert, XmlFormat }
 
 class CssQueryTest extends FlatSpec with ShouldMatchers {
   object TestImplicits extends CssImplicits
@@ -91,6 +91,18 @@ html @lang="en"
     (html $ "p ~ span").text should be === "ain't it great?"
   }
 
+  it should "support attribute contains" in {
+    (html $ "div[class*=age]").size should be === 3
+  }
+
+  it should "support attribute starts with" in {
+    (html $ "div[class^=mai]").size should be === 1
+  }
+
+  it should "support attribute ends with" in {
+    (html $ "div[class$=der]").size should be === 2
+  }
+
   it should "support nth selection" in {
     (html $ "ul > li:nth-child(1)").text should be === "HomeOne"
   }
@@ -121,5 +133,12 @@ html @lang="en"
     evaluating (html $ "!blarg") should produce [CssSelectorException]
     (html ?? "!blarg") should be ('left)
     (html ?? "div ol li") should be ('right)
+  }
+
+  it should "facilitate reverse lookups" in {
+    // Get's all p elements in [class~=body] elements
+    (html $ ".body p").size should be === 2
+    // Get's all [class~=body] elements which contains a p element
+    ((html $ ".body") filter (_ ? "p" isDefined)).size should be === 2
   }
 }

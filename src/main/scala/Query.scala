@@ -8,10 +8,10 @@ import xml.{ NodeSeq, Node }
 import util.control.Exception.allCatch
 
 trait CssImplicits {
-  implicit def nodeSeqToCssSelect(nodes: NodeSeq) = new RichCssSelection(nodes)
+  implicit def nodeSeqToCssSelect(nodes: NodeSeq) = RichCssSelection(nodes)
 }
 
-class RichCssSelection(origin: NodeSeq) {
+case class RichCssSelection(origin: NodeSeq) {
   def select(input: String)(implicit parser: CssParsers) = parser(input)(origin)
 
   def selectOption(input: String)(implicit parser: CssParsers) = {
@@ -52,8 +52,7 @@ trait CssParsers extends RegexParsers {
   private def nthGenerator(step: Int, adjust: Int): Transform = nodes => {
     if (step <= 0 && adjust == 0) nodes
     else if (step <= 0 && adjust != 0) {
-      nodes.lift(math.abs(adjust) - 1)
-        .map(singleToSeq).getOrElse(NodeSeq.Empty)
+      nodes.lift(math.abs(adjust) - 1).map(singleToSeq).getOrElse(NodeSeq.Empty)
     } else {
       val interval = math.abs(step)
       val index = if (adjust <= 0) interval + adjust else (adjust - 1)
@@ -117,7 +116,10 @@ trait CssParsers extends RegexParsers {
     (first, second) => first.endsWith(second)
   }
 
-  def attrMatchers = (attrEqual | attrSpaceEqual | attrHyphenEqual)
+  def attrMatchers = (
+    attrEqual | attrSpaceEqual | attrHyphenEqual |
+    attrStartsWith | attrContains | attrEndsWith
+  )
 
   def byAttr: Parser[Transform] =
     "[" ~> identity ~ opt(attrMatchers ~ identity) <~ "]" ^^ {
@@ -162,7 +164,13 @@ trait CssParsers extends RegexParsers {
   }
 
   def byDescend: Parser[Combinator] = whiteSpace ^^ { _ =>
-    (left, right) => nodes => left(nodes) flatMap (sameLevel(_)(right))
+    (left, right) => nodes =>
+      left(nodes) flatMap { node =>
+        val children = node.child
+        val sameSelect = left(children)
+        val valid = children.filterNot(sameSelect.contains)
+        right(valid) ++ (valid flatMap (sameLevel(_)(right)))
+      }
   }
 
   def byAdjacent: Parser[Combinator] = """\s*\+\s*""".r ^^ { _ =>

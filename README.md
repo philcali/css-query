@@ -1,6 +1,7 @@
 # CSS Query
 
-Query a Scala XML literal with CSS selectors.
+_CSS Query_ is a Scala library to filter XML literals using CSS selectors. The
+library currently supports CSS2 and CSS3 selectors.
 
 ## Examples
 
