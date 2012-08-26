@@ -101,6 +101,9 @@ html @lang="en"
 
   it should "support nth selection" in {
     (html $ "ul > li:nth-child(1)").text should be === "HomeOne"
+    (html $ "ul > li:nth-child(n)").text should be === "HomeAboutOneTwo"
+    (html $ "ul > li:nth-child(2n)").text should be === "AboutTwo"
+    (html $ "ul > li:nth-child(2n-1)").text should be === "HomeOne"
   }
 
   "CssParsers" should "be extensible" in {

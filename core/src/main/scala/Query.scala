@@ -3,7 +3,7 @@ package css.query
 import util.parsing.combinator.RegexParsers
 import java.lang.RuntimeException
 
-import xml.{ NodeSeq, Node }
+import xml.{ NodeSeq, Node, MetaData }
 
 import util.control.Exception.allCatch
 
@@ -55,9 +55,9 @@ trait CssParsers extends RegexParsers {
       nodes.lift(math.abs(adjust) - 1).map(singleToSeq).getOrElse(NodeSeq.Empty)
     } else {
       val interval = math.abs(step)
-      val index = if (adjust <= 0) interval + adjust else (adjust - 1)
+      val index = if (adjust <= 0) interval + adjust else adjust
       nodes.sliding(interval, interval).map(ns =>
-        ns.lift(index).map(singleToSeq).getOrElse(NodeSeq.Empty)
+        ns.lift(index - 1).map(singleToSeq).getOrElse(NodeSeq.Empty)
       ).foldRight(NodeSeq.Empty)(_ ++ _)
     }
   }
@@ -70,11 +70,33 @@ trait CssParsers extends RegexParsers {
     case None ~ num => num
   }
 
-  def pseudoAccess: Parser[Transform] =
+  def pseudoAccess = (pseudoAccessInterval | pseudoAccessDirect)
+
+  def pseudoAccessDirect: Parser[Transform] =
     opt(isSignedNumber <~ "n") ~ isSignedNumber ^^ {
       case Some(step) ~ adjust => nthGenerator(step, adjust)
       case None ~ adjust => nthGenerator(0, adjust)
     }
+
+  def pseudoAccessInterval: Parser[Transform] =
+    opt(isSignedNumber) ~ "n" ~ opt(isSignedNumber) ^^ {
+      case step ~ "n" ~ adjust =>
+        nthGenerator(step.getOrElse(1), adjust.getOrElse(0))
+    }
+
+  def byNamespace = opt("*" | identity) <~ "|"
+
+  def byTypeNamespace: Parser[Transform] = byNamespace ^^ {
+    case Some("*") | None => (nodes) => nodes
+    case Some(id) => _ filter (n =>
+      n.namespace != null && n.prefix.equalsIgnoreCase(id)
+    )
+  }
+
+  def byAttrNamespace: Parser[MetaData => MetaData] = byNamespace ^^ {
+    case Some("*") | None => (meta) => meta
+    case Some(id) => _ filter (_.prefixedKey.startsWith(id + ":"))
+  }
 
   def byUniversal: Parser[Transform] = "*" ^^ (_ => _ filter (!_.isAtom))
 
@@ -122,9 +144,12 @@ trait CssParsers extends RegexParsers {
   )
 
   def byAttr: Parser[Transform] =
-    "[" ~> identity ~ opt(attrMatchers ~ identity) <~ "]" ^^ {
-      case id ~ optional =>
-        val first: Transform = _ filter (_.attribute(id).isDefined)
+    "[" ~> opt(byAttrNamespace) ~ identity ~ opt(attrMatchers ~ identity) <~ "]" ^^ {
+      case ns ~ id ~ optional =>
+        val helper = (n: Node) =>
+          ns.map(_.apply(n.attributes))
+            .getOrElse(n.attributes)
+        val first: Transform = _ filter (helper(_).get(id).isDefined)
         optional match {
           case Some(matcher ~ value) =>
             val filterOn = matcher(_: String, value)
@@ -158,6 +183,16 @@ trait CssParsers extends RegexParsers {
     (":nth-last-of-type(" ~> pseudoAccess <~ ")") ^^ {
       fun => ((_: NodeSeq).reverse) andThen fun
     }
+
+  def byEmpty: Parser[Transform] = ":empty" ^^ (_ => _ filter(_.child isEmpty))
+
+  def byChecked: Parser[Transform] = ":checked" ^^ (_ =>
+    _ filter (_.attribute("checked").isDefined)
+  )
+
+  def byDisabled: Parser[Transform] = ":disabled" ^^ (_ =>
+    _ filter (_.attribute("disabled").isDefined)
+  )
 
   def byChild: Parser[Combinator] = """\s*>\s*""".r ^^ { _ =>
     (left, right) => nodes => left(nodes) flatMap (node => right(node.child))
@@ -195,9 +230,7 @@ trait CssParsers extends RegexParsers {
     }
   }
 
-  def byNegationArg = (
-    byType | byUniversal | byId | byClass | byAttr | byPseudo
-  )
+  def byNegationArg = (byTypeSelector | byId | byClass | byAttr | byPseudo)
 
   def byNeg: Parser[Transform] = ":not(" ~> byNegationArg <~ ")" ^^ {
     fun => nodes => {
@@ -206,24 +239,31 @@ trait CssParsers extends RegexParsers {
     }
   }
 
-  def leftSide = (byType | byUniversal)
-
-  def rightSide = (byId | byClass | byAttr | byPseudo | byNeg)
-
-  def weightedRight: Parser[Transform] = (opt(leftSide) ~ rep1(rightSide)) ^^ {
-    case el ~ ops =>
-      (el.getOrElse((_: NodeSeq).filter(!_.isAtom)) /: ops)(_ andThen _)
+  def byTypeSelector = opt(byTypeNamespace) ~ (byType | byUniversal) ^^ {
+    case op ~ trans => op.map(_ andThen trans).getOrElse(trans)
   }
 
-  def weightedLeft: Parser[Transform] = (leftSide ~ rep(rightSide)) ^^ {
-    case el ~ ops => (el /: ops)(_ andThen _)
-  }
+  def bySpecialSelector = (byId | byClass | byAttr | byPseudo | byNeg)
+
+  def weightedRight: Parser[Transform] =
+    (opt(byTypeSelector) ~ rep1(bySpecialSelector)) ^^ {
+      case el ~ ops =>
+        (el.getOrElse((_: NodeSeq).filter(!_.isAtom)) /: ops)(_ andThen _)
+    }
+
+  def weightedLeft: Parser[Transform] =
+    (byTypeSelector ~ rep(bySpecialSelector)) ^^ {
+      case el ~ ops => (el /: ops)(_ andThen _)
+    }
 
   def bySimpleSelect = (weightedLeft | weightedRight)
 
   def byCombinator = (byAdjacent | byGeneral | byChild | byDescend)
 
-  def byPseudo = (byFirst | byLast | byNth | byNthLast)
+  def byPseudo = (
+    byEmpty | byChecked | byDisabled |
+    byFirst | byLast | byNth | byNthLast
+  )
 
   def selectorSeq: Parser[Transform] =
     bySimpleSelect ~ rep(byCombinator ~ bySimpleSelect) ^^ {
