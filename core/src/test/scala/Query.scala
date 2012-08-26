@@ -6,12 +6,8 @@ import org.scalatest.matchers.ShouldMatchers
 
 import lmxml.{ PlainLmxmlFactory, Conversion, XmlConvert, XmlFormat }
 
-class CssQueryTest extends FlatSpec with ShouldMatchers {
-  object TestImplicits extends CssImplicits
-
+class CssQueryTest extends FlatSpec with ShouldMatchers with CssImplicits {
   implicit object CssSelectors extends CssParsers
-
-  import TestImplicits._
 
   object Lmxml extends PlainLmxmlFactory with Conversion
 
