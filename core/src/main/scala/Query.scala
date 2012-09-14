@@ -210,12 +210,12 @@ trait CssParsers extends RegexParsers {
 
   def byAdjacent: Parser[Combinator] = """\s*\+\s*""".r ^^ { _ =>
     (left, right) => nodes => {
-      noAtoms(nodes).sliding(2, 1).flatMap { ns =>
+      noAtoms(nodes).sliding(2, 1).toList.flatMap { ns =>
         val fNodes = left(ns.head)
         val sNodes = right(ns.tail)
         if (fNodes.isEmpty || sNodes.isEmpty) NodeSeq Empty
         else sNodes
-      }.toList
+      }
     }
   }
 
