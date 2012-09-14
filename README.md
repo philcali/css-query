@@ -9,7 +9,7 @@ A lot of useful information about how to use the library can be found at the
 ## Dependency
 
 ``` scala
-libraryDependencies += "com.github.philcali" %% "css-query" % "0.1.0"
+libraryDependencies += "com.github.philcali" %% "css-query-core" % "0.1.0"
 ```
 
 ## Usage
