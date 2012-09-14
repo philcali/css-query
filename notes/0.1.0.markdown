@@ -1,0 +1,4 @@
+- Initial release
+- See [Usage][1] documentation for basic usage
+
+[1]: https://github.com/philcali/css-query/wiki/Usage
